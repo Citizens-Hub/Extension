@@ -6,7 +6,7 @@
     "directory": "examples/init"
   },
   "name": "citizens-hub",
-  "description": "Get a quick overview over all your ships/upgrades in your hangar and buyback, plan optimal upgrade chains.",
+  "description": "Browse and create your CCU chains in Star Citizen — and more",
   "version": "1.0.0",
   "keywords": [
     "extension",
