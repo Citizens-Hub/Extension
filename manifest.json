@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json.schemastore.org/chrome-manifest.json",
+  "name": "Citizens' Hub",
+  "description": "Get a quick overview over all your ships/upgrades in your hangar and buyback, plan optimal upgrade chains.",
+  "version": "1.0.0",
+  "host_permissions": [
+    "https://robertsspaceindustries.com/*",
+    "https://support.robertsspaceindustries.com/*"
+  ],
+  "permissions": [
+    "storage",
+    "cookies"
+  ],
+  "manifest_version": 3,
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "128": "logo.png"
+  },
+  "background": {
+    "chromium:service_worker": "src/background.ts",
+    "firefox:scripts": ["src/background.ts"]
+  },
+  "action": {
+    "default_title": "Star Citizen CCU Planner",
+    "default_icon": {
+      "16": "logo.png",
+      "32": "logo.png",
+      "128": "logo.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://citizenshub.app/*",
+        "https://staging.citizenshub.app/*",
+        "*://localhost/*"
+      ],
+      "js": [
+        "src/content.ts"
+      ],
+      "css": [
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

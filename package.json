@@ -1,0 +1,39 @@
+{
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/extension-js/extension.git",
+    "directory": "examples/init"
+  },
+  "name": "citizens-hub",
+  "description": "Get a quick overview over all your ships/upgrades in your hangar and buyback, plan optimal upgrade chains.",
+  "version": "1.0.0",
+  "keywords": [
+    "extension",
+    "browser-extension",
+    "web-extension",
+    "template"
+  ],
+  "scripts": {
+    "dev": "extension dev  --polyfill",
+    "start": "extension start",
+    "build": "extension build",
+    "build:firefox": "extension build --polyfill --browser firefox"
+  },
+  "dependencies": {
+    "@types/node": "^22.15.17",
+    "axios": "^1.9.0",
+    "typescript": "^5.8.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.321",
+    "extension": "^2.0.0-rc.23"
+  },
+  "private": true,
+  "author": {
+    "name": "Your Name",
+    "email": "your@email.com",
+    "url": "https://yourwebsite.com"
+  },
+  "packageManager": "pnpm@9.11.0+sha512.0a203ffaed5a3f63242cd064c8fb5892366c103e328079318f78062f24ea8c9d50bc6a47aa3567cabefd824d170e78fa2745ed1f16b132e16436146b7688f19b"
+}
