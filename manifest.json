@@ -12,6 +12,11 @@
     "cookies"
   ],
   "manifest_version": 3,
+  "firefox:browser_specific_settings": {
+    "gecko": {
+      "id": "extension@citizenshub.app"
+    }
+  },
   "icons": {
     "16": "logo.png",
     "32": "logo.png",
