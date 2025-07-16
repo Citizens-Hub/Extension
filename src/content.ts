@@ -1,9 +1,9 @@
-import ships from "../data/ships.json";
+// import ships from "../data/ships.json";
 
 (() => {
   const ORIGIN = window.origin;
 
-  function tryResolveCCU(content: { name: string, match_items: { name: string }[], target_items: { name: string }[] }) {
+  function tryResolveCCU(content: { name: string, match_items: { name: string }[], target_items: { name: string }[] }, ships: any[]) {
     const name = content.name;
 
     let from = "";
@@ -47,13 +47,32 @@ import ships from "../data/ships.json";
     return { from, to };
   }
 
-  function replaceHangarPlaceholderImages() {
+  async function getShips() {
+    const now = new Date().getTime();
+
+    const { ships, lastUpdated } = await chrome.storage.local.get(["ships", "lastUpdated"]);
+
+    if (ships) return ships.ships;
+
+    if (!ships || !lastUpdated || now - lastUpdated > 1000 * 60 * 60 * 24) {
+      const response = await fetch("https://worker.citizenshub.app/api/ships");
+      const data = await response.json();
+
+      await chrome.storage.local.set({ ships: data.data, lastUpdated: now });
+
+      return data.data.ships;
+    }
+  }
+
+  async function replaceHangarPlaceholderImages() {
     const hangarItemsList = document.querySelectorAll('.list-items>li');
 
     if (!hangarItemsList.length) {
       requestAnimationFrame(replaceHangarPlaceholderImages);
       return;
     }
+
+    const ships = await getShips();
 
     hangarItemsList.forEach(item => {
       const image = item.querySelector('.item-image-wrapper>.image') as HTMLDivElement;
@@ -62,56 +81,58 @@ import ships from "../data/ships.json";
         return;
       }
 
-      const backgroundImage = window.getComputedStyle(image).backgroundImage;
-      const imageSrc = backgroundImage.replace(/^url\(['"](.+)['"]\)$/, '$1');
+      // const backgroundImage = window.getComputedStyle(image).backgroundImage;
+      // const imageSrc = backgroundImage.replace(/^url\(['"](.+)['"]\)$/, '$1');
 
-      if (imageSrc && imageSrc.includes('default-image.png')) {
-        const upgradeDetail = JSON.parse(item.querySelector('.js-upgrade-data')?.getAttribute("value") || "{}");
+      // if (imageSrc) {
+      const upgradeDetail = JSON.parse(item.querySelector('.js-upgrade-data')?.getAttribute("value") || "{}");
 
-        const parsed = tryResolveCCU(upgradeDetail);
+      const parsed = tryResolveCCU(upgradeDetail, ships);
 
-        if (!parsed) return;
+      if (!parsed) return;
 
-        image.style.backgroundImage = `url(${ships.find(ship => ship.name.toLowerCase().trim() === parsed?.from.toLowerCase().trim())?.medias?.productThumbMediumAndSmall})`;
-        image.style.backgroundSize = 'cover';
+      image.style.backgroundImage = `url(${ships.find(ship => ship.name.toLowerCase().trim() === parsed?.from.toLowerCase().trim())?.medias?.productThumbMediumAndSmall})`;
+      image.style.backgroundSize = 'cover';
 
-        const newImage = image.cloneNode(true) as HTMLDivElement;
-        newImage.style.backgroundImage = `url(${ships.find(ship => ship.name.toLowerCase().trim() === parsed?.to.toLowerCase().trim())?.medias?.productThumbMediumAndSmall})`;
+      const newImage = image.cloneNode(true) as HTMLDivElement;
+      newImage.style.backgroundImage = `url(${ships.find(ship => ship.name.toLowerCase().trim() === parsed?.to.toLowerCase().trim())?.medias?.productThumbMediumAndSmall})`;
 
-        const imageWrapper = item.querySelector('.item-image-wrapper') as HTMLDivElement;
-        imageWrapper.style.width = "220px"
-        imageWrapper.style.display = "flex"
-        imageWrapper.style.position = "relative"
-        imageWrapper.style.justifyContent = "space-between"
-        imageWrapper.style.alignItems = "center"
-        imageWrapper.appendChild(newImage);
+      const imageWrapper = item.querySelector('.item-image-wrapper') as HTMLDivElement;
+      imageWrapper.style.width = "220px"
+      imageWrapper.style.display = "flex"
+      imageWrapper.style.position = "relative"
+      imageWrapper.style.justifyContent = "space-between"
+      imageWrapper.style.alignItems = "center"
+      imageWrapper.appendChild(newImage);
 
-        const arrowRight = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-right-icon lucide-chevrons-right"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>'
-        const arrowRightContainer = document.createElement('div');
-        arrowRightContainer.innerHTML = arrowRight;
-        arrowRightContainer.style.width = "16px"
-        arrowRightContainer.style.height = "16px"
-        arrowRightContainer.style.color = "#fff"
-        arrowRightContainer.style.position = "absolute"
-        arrowRightContainer.style.left = "50%"
-        arrowRightContainer.style.top = "50%"
-        arrowRightContainer.style.transform = "translate(-50%, -50%)"
+      const arrowRight = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-right-icon lucide-chevrons-right"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>'
+      const arrowRightContainer = document.createElement('div');
+      arrowRightContainer.innerHTML = arrowRight;
+      arrowRightContainer.style.width = "16px"
+      arrowRightContainer.style.height = "16px"
+      arrowRightContainer.style.color = "#fff"
+      arrowRightContainer.style.position = "absolute"
+      arrowRightContainer.style.left = "50%"
+      arrowRightContainer.style.top = "50%"
+      arrowRightContainer.style.transform = "translate(-50%, -50%)"
 
-        imageWrapper.appendChild(arrowRightContainer);
+      imageWrapper.appendChild(arrowRightContainer);
 
-        const titleWrapper = item.querySelector('.wrapper-col') as HTMLDivElement;
-        titleWrapper.style.marginLeft = "260px"
-      }
+      const titleWrapper = item.querySelector('.wrapper-col') as HTMLDivElement;
+      titleWrapper.style.marginLeft = "260px"
+      // }
     });
   }
 
-  function replaceBuybackPlaceholderImages() {
+  async function replaceBuybackPlaceholderImages() {
     const listItems = document.querySelectorAll('.available-pledges .pledges>li');
 
     if (!listItems.length) {
       requestAnimationFrame(replaceBuybackPlaceholderImages);
       return;
     }
+
+    const ships = await getShips();
 
     const injectCss = `
     .extended-image-wrapper::before {
@@ -172,7 +193,7 @@ import ships from "../data/ships.json";
         name: ccu.name,
         match_items: [{ name: ccu.from }],
         target_items: [{ name: ccu.to }],
-      });
+      }, ships);
 
       if (parsed) {
         image.src = ships.find(ship => ship.name.toLowerCase().trim() === parsed?.from.toLowerCase().trim())?.medias?.productThumbMediumAndSmall || "";

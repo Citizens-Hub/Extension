@@ -5,7 +5,8 @@
   "version": "1.0.2",
   "host_permissions": [
     "https://robertsspaceindustries.com/*",
-    "https://support.robertsspaceindustries.com/*"
+    "https://support.robertsspaceindustries.com/*",
+    "https://worker.citizenshub.app/*"
   ],
   "permissions": [
     "storage",
