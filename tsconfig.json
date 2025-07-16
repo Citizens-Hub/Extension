@@ -20,7 +20,6 @@
       "@/*": ["./*"]
     },
     "noImplicitAny": false,
-    "suppressImplicitAnyIndexErrors": true
   },
   "include": ["./"],
   "exclude": ["node_modules", "dist"],

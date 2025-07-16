@@ -34,7 +34,6 @@ const RSI_TOKEN_KEY = "_lastrsi";
 // 创建自定义的 axios 实例，使用自定义适配器
 const axiosInstance = axios.create({
   adapter: async function(config) {
-    // 将 axios 配置转换为 fetch 请求
     const request = createRequest(config);
     const promises = [performFetch(request, config)];
 
