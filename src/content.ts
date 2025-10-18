@@ -52,16 +52,14 @@
 
     const { ships, lastUpdated } = await chrome.storage.local.get(["ships", "lastUpdated"]);
 
-    if (ships) return ships.ships;
+    if (ships && now - lastUpdated < 1000 * 60 * 60 * 24) return ships.ships;
 
-    if (!ships || !lastUpdated || now - lastUpdated > 1000 * 60 * 60 * 24) {
-      const response = await fetch("https://worker.citizenshub.app/api/ships");
-      const data = await response.json();
+    const response = await fetch("https://worker.citizenshub.app/api/ships");
+    const data = await response.json();
 
-      await chrome.storage.local.set({ ships: data.data, lastUpdated: now });
+    await chrome.storage.local.set({ ships: data.data, lastUpdated: now });
 
-      return data.data.ships;
-    }
+    return data.data.ships;
   }
 
   async function replaceHangarPlaceholderImages() {
