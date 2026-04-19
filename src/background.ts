@@ -296,7 +296,7 @@ async function handleHttpRequest(request) {
 
     // 从 RSI 网站获取新的 CSRF 令牌
     const response = await axiosInstance.get(
-      "https://robertsspaceindustries.com/store/pledge/browse/extras", 
+      "https://robertsspaceindustries.com/en/pledge/", 
       { responseType: "text" }
     );
 
