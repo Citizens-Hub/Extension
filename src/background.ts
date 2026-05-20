@@ -5,12 +5,40 @@ interface AxiosError extends Error {
   request?: any;
   response?: any;
   isAxiosError?: boolean;
+  description?: string,
+  number?: number,
+  fileName?: string,
+  lineNumber?: number,
+  columnNumber?: number,
   toJSON?: () => any;
 }
 
 // 扩展端口类型
 interface ExtendedPort extends chrome.runtime.Port {
   _timer?: NodeJS.Timeout;
+}
+
+interface ConnectedPortEntry {
+  port: ExtendedPort;
+  sender?: chrome.runtime.MessageSender;
+  tokenProvider?: {
+    provider: string | null;
+    readyAt: number;
+  } | null;
+}
+
+interface PendingTokenRequestEntry {
+  requester: ConnectedPortEntry;
+  payload: Record<string, unknown>;
+  candidates: ConnectedPortEntry[];
+  activeProvider: ConnectedPortEntry | null;
+  providerErrors: string[];
+}
+
+interface PendingTokenProviderHandshakeEntry {
+  entry: ConnectedPortEntry;
+  resolve: (ready: boolean) => void;
+  timer: NodeJS.Timeout;
 }
 
 // 定义 Cookie 类型
@@ -30,6 +58,12 @@ import axios from 'axios';
 // 定义存储键名常量
 const CSRF_KEY = "_lastcsrf";
 const RSI_TOKEN_KEY = "_lastrsi";
+const RSI_HOST = "robertsspaceindustries.com";
+const TOKEN_PROVIDER_HANDSHAKE_TIMEOUT_MS = 1_500;
+
+const connectedPorts = new Set<ConnectedPortEntry>();
+const pendingTokenRequests = new Map<string, PendingTokenRequestEntry>();
+const pendingTokenProviderHandshakes = new Map<string, PendingTokenProviderHandshakeEntry>();
 
 // 创建自定义的 axios 实例，使用自定义适配器
 const axiosInstance = axios.create({
@@ -224,10 +258,185 @@ function clearTimer(port: ExtendedPort) {
   }
 }
 
+function isRsiPort(entry: ConnectedPortEntry) {
+  const url = entry.sender?.url || entry.sender?.tab?.url || '';
+  return url.includes(RSI_HOST);
+}
+
+function createRequestId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getEntryLabel(entry: ConnectedPortEntry) {
+  const tabId = entry.sender?.tab?.id;
+  const url = entry.sender?.url || entry.sender?.tab?.url || '';
+  return tabId ? `RSI tab ${tabId}${url ? ` (${url})` : ''}` : (url || 'RSI tab');
+}
+
+function normalizeProviderName(provider: unknown): string | null {
+  if (typeof provider !== 'string') {
+    return null;
+  }
+
+  const trimmed = provider.trim();
+  return trimmed ? trimmed : null;
+}
+
+function markTokenProviderReady(entry: ConnectedPortEntry, provider: unknown) {
+  entry.tokenProvider = {
+    provider: normalizeProviderName(provider),
+    readyAt: Date.now(),
+  };
+}
+
+function cleanupPendingHandshakesForEntry(entry: ConnectedPortEntry) {
+  for (const [handshakeRequestId, pendingHandshake] of pendingTokenProviderHandshakes.entries()) {
+    if (pendingHandshake.entry !== entry) {
+      continue;
+    }
+
+    clearTimeout(pendingHandshake.timer);
+    pendingTokenProviderHandshakes.delete(handshakeRequestId);
+    pendingHandshake.resolve(false);
+  }
+}
+
+function resolvePendingHandshake(entry: ConnectedPortEntry, handshakeRequestId: unknown) {
+  if (typeof handshakeRequestId !== 'string' || !handshakeRequestId.trim()) {
+    return;
+  }
+
+  const pendingHandshake = pendingTokenProviderHandshakes.get(handshakeRequestId);
+  if (!pendingHandshake || pendingHandshake.entry !== entry) {
+    return;
+  }
+
+  clearTimeout(pendingHandshake.timer);
+  pendingTokenProviderHandshakes.delete(handshakeRequestId);
+  pendingHandshake.resolve(true);
+}
+
+function requestTokenProviderHandshake(entry: ConnectedPortEntry): Promise<boolean> {
+  return new Promise((resolve) => {
+    const handshakeRequestId = createRequestId('token-provider-handshake');
+    const timer = setTimeout(() => {
+      pendingTokenProviderHandshakes.delete(handshakeRequestId);
+      resolve(false);
+    }, TOKEN_PROVIDER_HANDSHAKE_TIMEOUT_MS);
+
+    pendingTokenProviderHandshakes.set(handshakeRequestId, {
+      entry,
+      resolve: (ready) => resolve(ready),
+      timer,
+    });
+
+    try {
+      entry.port.postMessage({
+        type: 'tokenProviderHandshake',
+        handshakeRequestId,
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      pendingTokenProviderHandshakes.delete(handshakeRequestId);
+      resolve(false);
+    }
+  });
+}
+
+async function discoverReadyTokenProviders(requester: ConnectedPortEntry): Promise<ConnectedPortEntry[]> {
+  const candidates = Array.from(connectedPorts).filter(candidate => candidate !== requester && isRsiPort(candidate));
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const results = await Promise.all(candidates.map(async (candidate) => ({
+    entry: candidate,
+    ready: await requestTokenProviderHandshake(candidate),
+  })));
+
+  return results
+    .filter((result) => result.ready)
+    .sort((left, right) => (right.entry.tokenProvider?.readyAt || 0) - (left.entry.tokenProvider?.readyAt || 0))
+    .map((result) => result.entry);
+}
+
+function failPendingTokenRequest(requestId: string, errorMessage: string) {
+  const pendingRequest = pendingTokenRequests.get(requestId);
+  if (!pendingRequest) {
+    return;
+  }
+
+  pendingTokenRequests.delete(requestId);
+  pendingRequest.requester.port.postMessage({
+    requestId,
+    error: { message: errorMessage },
+  });
+}
+
+function dispatchPendingTokenRequest(requestId: string) {
+  const pendingRequest = pendingTokenRequests.get(requestId);
+  if (!pendingRequest) {
+    return;
+  }
+
+  const nextProvider = pendingRequest.candidates.shift() || null;
+  if (!nextProvider) {
+    const fallbackError = pendingRequest.providerErrors[pendingRequest.providerErrors.length - 1]
+      || 'No RSI tab with a ready checkout token provider is available. Reload the RSI page and re-run the provider snippet.';
+    failPendingTokenRequest(requestId, fallbackError);
+    return;
+  }
+
+  pendingRequest.activeProvider = nextProvider;
+
+  try {
+    nextProvider.port.postMessage({
+      type: 'requestTokenFromPage',
+      requestId,
+      payload: pendingRequest.payload,
+    });
+  } catch (error) {
+    pendingRequest.activeProvider = null;
+    dispatchPendingTokenRequest(requestId);
+  }
+}
+
+function cleanupPendingRequestsForEntry(entry: ConnectedPortEntry) {
+  for (const [requestId, pendingRequest] of pendingTokenRequests.entries()) {
+    if (pendingRequest.requester === entry) {
+      pendingTokenRequests.delete(requestId);
+      continue;
+    }
+
+    pendingRequest.candidates = pendingRequest.candidates.filter(candidate => candidate !== entry);
+
+    if (pendingRequest.activeProvider === entry) {
+      pendingRequest.activeProvider = null;
+      pendingRequest.providerErrors.push(`${getEntryLabel(entry)} disconnected while waiting for a checkout token.`);
+      dispatchPendingTokenRequest(requestId);
+    }
+  }
+}
+
+function normalizeTokenValue(token: unknown): string | null {
+  if (typeof token !== 'string') {
+    return null;
+  }
+
+  const trimmed = token.trim();
+  return trimmed ? trimmed : null;
+}
+
 // 监听连接请求
 chrome.runtime.onConnect.addListener((port: ExtendedPort) => {
+  const entry: ConnectedPortEntry = {
+    port,
+    sender: port.sender,
+  };
+  connectedPorts.add(entry);
+
   // 处理消息
-  port.onMessage.addListener(async (message, sender) => {
+  port.onMessage.addListener(async (message) => {
     switch (message.type) {
       case "connect":
         // 返回版本信息
@@ -253,12 +462,102 @@ chrome.runtime.onConnect.addListener((port: ExtendedPort) => {
             requestId: message.requestId,
             value: JSON.parse(JSON.stringify(response))
           });
-        } catch (error) {
+        } catch (error: any) {
           port.postMessage({
             requestId: message.requestId,
             error: { message: error.message }
           });
         }
+        break;
+
+      case "tokenRequest": {
+        const requester = entry;
+        const providerEntries = await discoverReadyTokenProviders(requester);
+
+        if (providerEntries.length === 0) {
+          port.postMessage({
+            requestId: message.requestId,
+            error: { message: "No RSI tab acknowledged the checkout token provider handshake. Re-run the provider snippet in an open RSI tab and keep that tab open." }
+          });
+          break;
+        }
+
+        pendingTokenRequests.set(message.requestId, {
+          requester,
+          payload: (
+            typeof message.payload === 'object'
+            && message.payload !== null
+            && !Array.isArray(message.payload)
+          )
+            ? message.payload as Record<string, unknown>
+            : {},
+          candidates: [...providerEntries],
+          activeProvider: null,
+          providerErrors: [],
+        });
+        dispatchPendingTokenRequest(message.requestId);
+        break;
+      }
+
+      case "tokenProviderStatus": {
+        const requester = entry;
+        const providerEntries = await discoverReadyTokenProviders(requester);
+        port.postMessage({
+          requestId: message.requestId,
+          value: {
+            available: providerEntries.length > 0,
+            providerCount: providerEntries.length,
+            providers: providerEntries.map((providerEntry) =>
+              providerEntry.tokenProvider?.provider
+              || getEntryLabel(providerEntry)),
+          },
+        });
+        break;
+      }
+
+      case "provideToken": {
+        const pendingRequest = pendingTokenRequests.get(message.requestId);
+        if (!pendingRequest || pendingRequest.activeProvider !== entry) {
+          break;
+        }
+
+        const token = normalizeTokenValue(message.token);
+        if (!token) {
+          pendingRequest.activeProvider = null;
+          pendingRequest.providerErrors.push(`${getEntryLabel(entry)} returned an empty checkout token.`);
+          dispatchPendingTokenRequest(message.requestId);
+          break;
+        }
+
+        pendingTokenRequests.delete(message.requestId);
+        pendingRequest.requester.port.postMessage({
+          requestId: message.requestId,
+          value: {
+            token,
+            provider: typeof message.provider === 'string' ? message.provider : null
+          }
+        });
+        break;
+      }
+
+      case "provideTokenError": {
+        const pendingRequest = pendingTokenRequests.get(message.requestId);
+        if (!pendingRequest || pendingRequest.activeProvider !== entry) {
+          break;
+        }
+
+        const errorMessage = typeof message.error === 'string' && message.error.trim()
+          ? message.error.trim()
+          : "The RSI token provider returned an unknown error.";
+        pendingRequest.activeProvider = null;
+        pendingRequest.providerErrors.push(`${getEntryLabel(entry)}: ${errorMessage}`);
+        dispatchPendingTokenRequest(message.requestId);
+        break;
+      }
+
+      case "tokenProviderReady":
+        markTokenProviderReady(entry, message.provider);
+        resolvePendingHandshake(entry, message.handshakeRequestId);
         break;
         
       default:
@@ -270,7 +569,12 @@ chrome.runtime.onConnect.addListener((port: ExtendedPort) => {
   });
   
   // 处理断开连接
-  port.onDisconnect.addListener(clearTimer);
+  port.onDisconnect.addListener(() => {
+    clearTimer(port);
+    connectedPorts.delete(entry);
+    cleanupPendingHandshakesForEntry(entry);
+    cleanupPendingRequestsForEntry(entry);
+  });
   
   // 设置连接超时（250秒 = 250000毫秒）
   port._timer = setTimeout(disconnectPort, 250000, port);
